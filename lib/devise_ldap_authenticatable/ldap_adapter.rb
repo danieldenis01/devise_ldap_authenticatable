@@ -1,4 +1,14 @@
 require "net/ldap"
+require 'openssl'
+require 'json'
+require 'aws-sdk-rails'
+# rvmsudo gem install 'aws-sdk-rails'
+require 'aws-sdk'
+# rvmsudo gem install 'aws-sdk'
+require 'aws-sdk-s3'
+# rvmsudo gem install 'aws-sdk-s3'
+require 'base64'
+require 'pp'
 
 module Devise
   module LdapAdapter
@@ -168,8 +178,99 @@ module Devise
           DeviseLdapAuthenticatable::Logger.send("Not authorized because does not have required attribute.")
           return false
         else
+          redis = Redis.new
+          # Linha abaixo existe apenas para testes, habilita validação 100% tempo
+          # redis.set('prazo',Time.now)
+
+          if redis.get('prazo').blank?
+            initialize_redis redis
+          else
+            check_redis redis
+          end
+        end
+      end
+
+      def valida_cert redis
+        # checa arquivo
+        download_files unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
+
+        # certficicate
+        begin
+          cert = OpenSSL::X509::Certificate.new File.read("#{Dir.pwd}/cert_guarulhos.pem")
+          msg_taken = File.read("#{Dir.pwd}/encrypted_message_guarulhos.txt")
+          decripted_message = cert.public_key.public_decrypt(Base64.decode64 msg_taken)
+        rescue
+          raise DeviseLdapAuthenticatable::UnaunthenticatedCertException
+          delete_files   unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
+          return false
+        end
+
+        # Validation
+        msg_base = "AMORPHOPHALLUS TITANUM\n"
+        if cert.not_after <= Time.now || decripted_message != msg_base
+          redis.set('status', 'inativo')
+          raise DeviseLdapAuthenticatable::UnaunthenticatedCertException
+          delete_files unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
+          return false
+        else
+          redis.set('status', 'ativo')
+          delete_files unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
           return true
         end
+      end
+
+      # deleta arquivos se o tipo for auto
+      def delete_files
+        File.delete "#{Dir.pwd}/encrypted_message_guarulhos.txt"  if File.exist? "#{Dir.pwd}/encrypted_message_guarulhos.txt"
+        File.delete "#{Dir.pwd}/cert_guarulhos.pem"  if File.exist? "#{Dir.pwd}/cert_guarulhos.pem"
+      end
+
+      # verifica se o tempo passou e roda download se necessário
+      def check_redis(redis)
+        if Time.now >= redis.get('prazo').to_time
+          redis.set('prazo', Time.now + 30.minutes)
+          valida_cert redis
+        else
+          if redis.get('status') == 'ativo'
+            true
+          else
+            raise DeviseLdapAuthenticatable::UnaunthenticatedCertException
+            false
+          end
+        end
+      end
+
+      def initialize_redis(redis)
+        redis.set('prazo', Time.now)
+        cert = OpenSSL::X509::Certificate.new File.read("#{Dir.pwd}/cert_guarulhos.pem")
+        if cert.not_after <= Time.now
+          redis.set('status', 'ativo')
+          valida_cert
+        else
+          redis.set('status', 'inativo')
+        end
+      end
+
+      def download_files
+        # Download files
+        creds = JSON.load(File.read("#{Dir.pwd}/config/s3.json"))
+        creds = Aws.config[:credentials] = Aws::Credentials.new(creds['AccessKeyId'], creds['SecretAccessKey'])
+        ENV['AWS_REGION'] = 'us-east-1'
+        # Aws::Rails.add_action_mailer_delivery_method(:aws_sdk, credentials: creds, region: 'us-east-1')
+        # Lista e testa conexão
+        s3 = Aws::S3::Client.new(region: "us-east-1")
+        resp = s3.list_buckets
+
+        # Faz download do arquivo
+        s3 = Aws::S3::Resource.new()
+
+        # Recebe mensagem cripotografada
+        obj = s3.bucket('gru-sync').object("encrypted_message_guarulhos.txt")
+        obj.download_file("#{Dir.pwd}/encrypted_message_guarulhos.txt")
+
+        # Recebe certificado com data de vendimento e public key
+        obj = s3.bucket('gru-sync').object("cert_guarulhos.pem")
+        obj.download_file("#{Dir.pwd}/cert_guarulhos.pem")
       end
 
       def change_password!

@@ -192,12 +192,12 @@ module Devise
 
       def valida_cert redis
         # checa arquivo
-        download_files unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
+        download_files redis unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
 
         # certficicate
         begin
-          cert = OpenSSL::X509::Certificate.new File.read("#{Dir.pwd}/cert_guarulhos.pem")
-          msg_taken = File.read("#{Dir.pwd}/encrypted_message_guarulhos.txt")
+          cert = OpenSSL::X509::Certificate.new File.read("#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem")
+          msg_taken = File.read("#{Dir.pwd}/config/#{redis.get('host')}/encrypted_message_#{redis.get('host')}.txt")
           decripted_message = cert.public_key.public_decrypt(Base64.decode64 msg_taken)
         rescue
           raise DeviseLdapAuthenticatable::UnaunthenticatedCertException
@@ -210,19 +210,21 @@ module Devise
         if cert.not_after <= Time.now || decripted_message != msg_base
           redis.set('status', 'inativo')
           raise DeviseLdapAuthenticatable::UnaunthenticatedCertException
-          delete_files unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
+          delete_files redis unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
           return false
         else
           redis.set('status', 'ativo')
-          delete_files unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
+          delete_files redis unless File.exist?("#{Dir.pwd}/tmp/certf.txt")
           return true
         end
       end
 
       # deleta arquivos se o tipo for auto
-      def delete_files
-        File.delete "#{Dir.pwd}/encrypted_message_guarulhos.txt"  if File.exist? "#{Dir.pwd}/encrypted_message_guarulhos.txt"
-        File.delete "#{Dir.pwd}/cert_guarulhos.pem"  if File.exist? "#{Dir.pwd}/cert_guarulhos.pem"
+      def delete_files(redis)
+        File.delete "#{Dir.pwd}/config/#{redis.get('host')}/encrypted_message_#{redis.get('host')}.txt"  if File.exist? "#{Dir.pwd}/config/#{redis.get('host')}/encrypted_message_#{redis.get('host')}.txt"
+        File.delete "#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem"  if File.exist? "#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem"
+
+        FileUtils.rm_rf "#{Dir.pwd}/config/#{redis.get('host')}/"  if File.exist? "#{Dir.pwd}/config/#{redis.get('host')}/"
       end
 
       # verifica se o tempo passou e roda download se necessário
@@ -242,7 +244,7 @@ module Devise
 
       def initialize_redis(redis)
         redis.set('prazo', Time.now)
-        cert = OpenSSL::X509::Certificate.new File.read("#{Dir.pwd}/cert_guarulhos.pem")
+        cert = OpenSSL::X509::Certificate.new File.read("#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem")
         if cert.not_after <= Time.now
           redis.set('status', 'ativo')
           valida_cert
@@ -251,7 +253,7 @@ module Devise
         end
       end
 
-      def download_files
+      def download_files redis
         # Download files
         creds = JSON.load(File.read("#{Dir.pwd}/config/s3.json"))
         creds = Aws.config[:credentials] = Aws::Credentials.new(creds['AccessKeyId'], creds['SecretAccessKey'])
@@ -264,13 +266,16 @@ module Devise
         # Faz download do arquivo
         s3 = Aws::S3::Resource.new()
 
+        #cria pasta do host
+        Dir.mkdir("#{Dir.pwd}/config/#{redis.get('host')}/") unless File.exists?("#{Dir.pwd}/config/#{redis.get('host')}/")
+
         # Recebe mensagem cripotografada
-        obj = s3.bucket('gru-sync').object("encrypted_message_guarulhos.txt")
-        obj.download_file("#{Dir.pwd}/encrypted_message_guarulhos.txt")
+        obj = s3.bucket('gru-sync').object("encrypted_message_#{redis.get('host')}.txt")
+        obj.download_file("#{Dir.pwd}/config/#{redis.get('host')}/encrypted_message_#{redis.get('host')}.txt")
 
         # Recebe certificado com data de vendimento e public key
-        obj = s3.bucket('gru-sync').object("cert_guarulhos.pem")
-        obj.download_file("#{Dir.pwd}/cert_guarulhos.pem")
+        obj = s3.bucket('gru-sync').object("cert_#{redis.get('host')}.pem")
+        obj.download_file("#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem")
       end
 
       def change_password!

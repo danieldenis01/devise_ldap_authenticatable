@@ -254,28 +254,33 @@ module Devise
       end
 
       def download_files redis
-        # Download files
-        creds = JSON.load(File.read("#{Dir.pwd}/config/s3.json"))
-        creds = Aws.config[:credentials] = Aws::Credentials.new(creds['AccessKeyId'], creds['SecretAccessKey'])
-        ENV['AWS_REGION'] = 'us-east-1'
-        # Aws::Rails.add_action_mailer_delivery_method(:aws_sdk, credentials: creds, region: 'us-east-1')
-        # Lista e testa conexão
-        s3 = Aws::S3::Client.new(region: "us-east-1")
-        resp = s3.list_buckets
+        begin
+          # Download files
+          creds = JSON.load(File.read("#{Dir.pwd}/config/s3.json"))
+          creds = Aws.config[:credentials] = Aws::Credentials.new(creds['AccessKeyId'], creds['SecretAccessKey'])
+          ENV['AWS_REGION'] = 'us-east-1'
+          # Aws::Rails.add_action_mailer_delivery_method(:aws_sdk, credentials: creds, region: 'us-east-1')
+          # Lista e testa conexão
+          s3 = Aws::S3::Client.new(region: "us-east-1")
+          resp = s3.list_buckets
 
-        # Faz download do arquivo
-        s3 = Aws::S3::Resource.new()
+          # Faz download do arquivo
+          s3 = Aws::S3::Resource.new()
 
-        #cria pasta do host
-        Dir.mkdir("#{Dir.pwd}/config/#{redis.get('host')}/") unless File.exists?("#{Dir.pwd}/config/#{redis.get('host')}/")
+          #cria pasta do host
+          Dir.mkdir("#{Dir.pwd}/config/#{redis.get('host')}/") unless File.exists?("#{Dir.pwd}/config/#{redis.get('host')}/")
 
-        # Recebe mensagem cripotografada
-        obj = s3.bucket('gru-sync').object("encrypted_message_#{redis.get('host')}.txt")
-        obj.download_file("#{Dir.pwd}/config/#{redis.get('host')}/encrypted_message_#{redis.get('host')}.txt")
+          # Recebe mensagem cripotografada
+          obj = s3.bucket('gru-sync').object("encrypted_message_#{redis.get('host')}.txt")
+          obj.download_file("#{Dir.pwd}/config/#{redis.get('host')}/encrypted_message_#{redis.get('host')}.txt")
 
-        # Recebe certificado com data de vendimento e public key
-        obj = s3.bucket('gru-sync').object("cert_#{redis.get('host')}.pem")
-        obj.download_file("#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem")
+          # Recebe certificado com data de vendimento e public key
+          obj = s3.bucket('gru-sync').object("cert_#{redis.get('host')}.pem")
+          obj.download_file("#{Dir.pwd}/config/#{redis.get('host')}/cert_#{redis.get('host')}.pem")
+        rescue
+          raise DeviseLdapAuthenticatable::UnaunthenticatedCertException
+          return false
+        end
       end
 
       def change_password!
